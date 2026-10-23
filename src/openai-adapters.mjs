@@ -249,6 +249,9 @@ function normalizeResponsesRequest(payload) {
   if (next.input !== undefined && !Array.isArray(next.input) && typeof next.input !== "string") {
     throw adapterError("Responses input must be a string or array.");
   }
+  if (typeof next.input === "string") {
+    next.input = [{ type: "message", role: "user", content: contentToResponses(next.input) }];
+  }
   if (Array.isArray(next.input)) {
     next.input = next.input.map((item) => {
       object(item, "input item");

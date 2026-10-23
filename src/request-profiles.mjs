@@ -23,6 +23,8 @@ export const REQUEST_PROFILES = Object.freeze([
   "ox-alpha",
   "qwen-plan",
   "qwen38-community",
+  "spark-qwen",
+  "spark-server-default",
   "xai-reasoning",
 ]);
 

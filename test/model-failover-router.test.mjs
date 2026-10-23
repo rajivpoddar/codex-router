@@ -200,6 +200,7 @@ function run(
     genericProviders,
     v2Credentials = false,
     hiddenModels,
+    nativeResponsesFixture = false,
   } = {},
 ) {
   const stateDir = mkdtempSync(path.join(os.tmpdir(), "model-failover-router-state-"));
@@ -224,10 +225,12 @@ function run(
       "utf8",
     );
   }
-  if (Array.isArray(userModels)) {
+  const fixtureModels = nativeResponsesFixture || chain?.includes(RESPONSES_MODEL.slug)
+    ? [RESPONSES_MODEL] : [];
+  if (Array.isArray(userModels) || fixtureModels.length > 0) {
     writeFileSync(
       path.join(stateDir, "user-models.json"),
-      JSON.stringify({ version: 1, models: userModels }),
+      JSON.stringify({ version: 1, models: [...fixtureModels, ...(userModels || [])] }),
       "utf8",
     );
   }
@@ -248,8 +251,8 @@ function run(
     mode: 0o600,
   });
   // The genuinely Responses-native provider used by the protocol-crossing
-  // cases. OpenCode Go Responses has a function-only compatibility boundary,
-  // so it is no longer a valid exemplar for preserving native namespaces.
+  // cases. Local Meta and OpenCode Go Responses have function-only boundaries,
+  // so use a Zen Responses fixture for preserving native namespaces.
   writeFileSync(path.join(stateDir, "meta-api-key.secret"), "test-meta-key\n", {
     encoding: "utf8",
     mode: 0o600,
@@ -1319,8 +1322,12 @@ test("a fallback rebuild carries the full request, not a model swap", async () =
 // map, shipping plausible tools the response transform can no longer map back.
 
 const RESPONSES_MODEL = {
-  slug: "meta/muse-spark-1.2",
-  gatewayModel: "meta-muse-spark-1-2",
+  ...JSON.parse(readFileSync(path.join(root, "config/meta/muse-spark-1.2.json"), "utf8")).models[0],
+  slug: "opencode-zen-responses/native-fixture",
+  gatewayModel: "opencode-zen-responses-native-fixture",
+  upstreamModel: "native-fixture",
+  provider: "opencode-zen-responses",
+  requestProfile: undefined,
 };
 
 test("failover keeps the newest tool result exact for the serving model", async () => {
@@ -1463,7 +1470,7 @@ test("a responses turn failing over to a chat-completions provider flattens it",
     response.end(contentSse("chat-fallback"));
   });
   const routerPort = await openPort();
-  const child = run(routerEnv(gw.port, routerPort), { chain: [FALLBACK.slug] });
+  const child = run(routerEnv(gw.port, routerPort), { chain: [FALLBACK.slug], nativeResponsesFixture: true });
   try {
     await waitFor(`http://127.0.0.1:${routerPort}/health`, child);
     const result = await readRouted(routerPort, {

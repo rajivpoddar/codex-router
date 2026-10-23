@@ -1,0 +1,239 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "cliproxy-claude",
+      "displayName": "Claude OAuth via CLIProxyAPI",
+      "kind": "openai-compatible",
+      "protocol": "openai-responses",
+      "ownedBy": "anthropic",
+      "baseUrl": "http://127.0.0.1:8317/v1",
+      "baseUrlEnv": "CLIPROXY_CLAUDE_BASE_URL",
+      "credential": {
+        "environment": [
+          "CLIPROXY_CLAUDE_API_KEY",
+          "CLIPROXY_API_KEY"
+        ],
+        "file": "cliproxy-claude-api-key.secret",
+        "legacyFiles": [],
+        "keychainServices": [
+          "codex-router-cliproxy-claude"
+        ],
+        "prompt": "CLIProxyAPI local client key"
+      }
+    }
+  ],
+  "models": [
+    {
+      "slug": "cliproxy-claude/claude-opus-5.5",
+      "gatewayModel": "cliproxy-claude-claude-opus-5-5",
+      "upstreamModel": "claude-opus-5-5",
+      "provider": "cliproxy-claude",
+      "listed": true,
+      "multiAgentVersion": "v2",
+      "displayName": "Claude Opus 5.5 (CLIProxy OAuth)",
+      "description": "Claude Opus 5.5 through CLIProxyAPI's Anthropic OAuth session, with agentic coding, tool calls, and native Responses reasoning.",
+      "priority": 3,
+      "defaultEffort": "high",
+      "reasoningLevels": [
+        {
+          "effort": "low",
+          "description": "Faster reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Deep reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extended reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning depth"
+        }
+      ],
+      "contextWindow": 1048576,
+      "autoCompact": 900000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "supportsReasoningSummaries": true,
+      "compHash": "cliproxy-claude-claude-opus-5-5-v1",
+      "requestProfile": "auto-tool-choice"
+    },
+    {
+      "slug": "cliproxy-claude/claude-opus-4.8",
+      "gatewayModel": "cliproxy-claude-claude-opus-4-8",
+      "upstreamModel": "claude-opus-4-8",
+      "provider": "cliproxy-claude",
+      "listed": true,
+      "multiAgentVersion": "v2",
+      "displayName": "Claude Opus 4.8 (CLIProxy OAuth)",
+      "description": "Claude Opus 4.8 through CLIProxyAPI's Anthropic OAuth session, with agentic coding, tool calls, and native Responses reasoning.",
+      "priority": 3,
+      "defaultEffort": "high",
+      "reasoningLevels": [
+        {
+          "effort": "low",
+          "description": "Faster reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Deep reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extended reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning depth"
+        }
+      ],
+      "contextWindow": 1048576,
+      "autoCompact": 900000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "supportsReasoningSummaries": true,
+      "compHash": "cliproxy-claude-claude-opus-4-8-v1"
+    },
+    {
+      "slug": "cliproxy-claude/opus-4.8",
+      "gatewayModel": "cliproxy-claude-opus-4-8",
+      "upstreamModel": "claude-opus-4-8",
+      "provider": "cliproxy-claude",
+      "listed": false,
+      "multiAgentVersion": "v2",
+      "displayName": "Claude Opus 4.8 (CLIProxy OAuth)",
+      "description": "Claude Opus 4.8 through CLIProxyAPI's Anthropic OAuth session, with agentic coding, tool calls, and native Responses reasoning.",
+      "priority": 3,
+      "defaultEffort": "high",
+      "reasoningLevels": [
+        {
+          "effort": "low",
+          "description": "Faster reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Deep reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extended reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning depth"
+        }
+      ],
+      "contextWindow": 1048576,
+      "autoCompact": 900000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "supportsReasoningSummaries": true,
+      "compHash": "cliproxy-claude-opus-4-8-v1"
+    },
+    {
+      "slug": "cliproxy-claude/claude-fable-5.1",
+      "gatewayModel": "cliproxy-claude-claude-fable-5-1",
+      "upstreamModel": "claude-fable-5-1",
+      "provider": "cliproxy-claude",
+      "listed": true,
+      "multiAgentVersion": "v2",
+      "displayName": "Claude Fable 5.1 (CLIProxy OAuth)",
+      "description": "Claude Fable 5.1 through CLIProxyAPI's Anthropic OAuth session, with agentic coding, tool calls, and thinking.",
+      "priority": 3,
+      "defaultEffort": "high",
+      "reasoningLevels": [
+        {
+          "effort": "low",
+          "description": "Faster reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Deep reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extended reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning depth"
+        }
+      ],
+      "contextWindow": 1000000,
+      "autoCompact": 900000,
+      "inputModalities": [
+        "text"
+      ],
+      "supportsReasoningSummaries": true,
+      "compHash": "cliproxy-claude-claude-fable-5-1-v1",
+      "requestProfile": "auto-tool-choice"
+    },
+    {
+      "slug": "cliproxy-claude/fable-5.1",
+      "gatewayModel": "cliproxy-claude-fable-5-1",
+      "upstreamModel": "claude-fable-5-1",
+      "provider": "cliproxy-claude",
+      "listed": false,
+      "multiAgentVersion": "v2",
+      "displayName": "Claude Fable 5.1 (CLIProxy OAuth)",
+      "description": "Claude Fable 5.1 through CLIProxyAPI's Anthropic OAuth session, with agentic coding, tool calls, and thinking.",
+      "priority": 3,
+      "defaultEffort": "high",
+      "reasoningLevels": [
+        {
+          "effort": "low",
+          "description": "Faster reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Deep reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extended reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning depth"
+        }
+      ],
+      "contextWindow": 1000000,
+      "autoCompact": 900000,
+      "inputModalities": [
+        "text"
+      ],
+      "supportsReasoningSummaries": true,
+      "compHash": "cliproxy-claude-fable-5-1-v1",
+      "requestProfile": "auto-tool-choice"
+    }
+  ]
+}

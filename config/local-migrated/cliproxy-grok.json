@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "cliproxy-grok",
+      "displayName": "Grok OAuth via CLIProxyAPI",
+      "kind": "openai-compatible",
+      "protocol": "openai-responses",
+      "ownedBy": "xai",
+      "baseUrl": "http://127.0.0.1:8317/v1",
+      "baseUrlEnv": "CLIPROXY_GROK_BASE_URL",
+      "credential": {
+        "environment": [
+          "CLIPROXY_GROK_API_KEY",
+          "CLIPROXY_API_KEY"
+        ],
+        "file": "cliproxy-grok-api-key.secret",
+        "legacyFiles": [],
+        "keychainServices": [
+          "codex-router-cliproxy-grok"
+        ],
+        "prompt": "CLIProxyAPI local client key"
+      }
+    }
+  ],
+  "models": [
+    {
+      "slug": "cliproxy-grok/grok-4.7",
+      "gatewayModel": "cliproxy-grok-grok-4-7",
+      "upstreamModel": "grok-4.7",
+      "provider": "cliproxy-grok",
+      "listed": true,
+      "multiAgentVersion": "v2",
+      "displayName": "Grok 4.7 (CLIProxy OAuth)",
+      "description": "Grok 4.7 through CLIProxyAPI's xAI OAuth session, with agentic coding, tool calls, and hosted web/X search.",
+      "priority": 2,
+      "defaultEffort": "high",
+      "reasoningLevels": [
+        {
+          "effort": "low",
+          "description": "Faster reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Deep reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Maximum reasoning depth"
+        }
+      ],
+      "contextWindow": 500000,
+      "autoCompact": 440000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "instructionOverlay": "filesystem-mcp-discipline",
+      "supportsReasoningSummaries": true,
+      "searchTool": {
+        "mode": "hosted"
+      },
+      "supportsImageDetailOriginal": true,
+      "compHash": "cliproxy-grok-grok-4-7-v1"
+    },
+    {
+      "slug": "cliproxy-grok/grok-4.6",
+      "gatewayModel": "cliproxy-grok-grok-4-6",
+      "upstreamModel": "grok-4.6",
+      "provider": "cliproxy-grok",
+      "listed": true,
+      "multiAgentVersion": "v2",
+      "displayName": "Grok 4.6 (CLIProxy OAuth)",
+      "description": "Grok 4.6 through CLIProxyAPI's xAI OAuth session, with agentic coding, tool calls, and hosted web/X search.",
+      "priority": 3,
+      "defaultEffort": "high",
+      "reasoningLevels": [
+        {
+          "effort": "low",
+          "description": "Faster reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Deep reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Maximum reasoning depth"
+        }
+      ],
+      "contextWindow": 500000,
+      "autoCompact": 440000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "instructionOverlay": "filesystem-mcp-discipline",
+      "supportsReasoningSummaries": true,
+      "searchTool": {
+        "mode": "hosted"
+      },
+      "supportsImageDetailOriginal": true,
+      "compHash": "cliproxy-grok-grok-4-6-v1"
+    },
+    {
+      "slug": "cliproxy-grok/grok-4.5",
+      "gatewayModel": "cliproxy-grok-grok-4-5",
+      "upstreamModel": "grok-4.5",
+      "provider": "cliproxy-grok",
+      "listed": true,
+      "multiAgentVersion": "v2",
+      "displayName": "Grok 4.5 (CLIProxy OAuth)",
+      "description": "Grok 4.5 through CLIProxyAPI's xAI OAuth session, with agentic coding, tool calls, and hosted web/X search.",
+      "priority": 4,
+      "defaultEffort": "high",
+      "reasoningLevels": [
+        {
+          "effort": "low",
+          "description": "Faster reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Deep reasoning"
+        }
+      ],
+      "contextWindow": 500000,
+      "autoCompact": 440000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "supportsReasoningSummaries": true,
+      "searchTool": {
+        "mode": "hosted"
+      },
+      "supportsImageDetailOriginal": true,
+      "compHash": "cliproxy-grok-grok-4-5-v1"
+    }
+  ]
+}

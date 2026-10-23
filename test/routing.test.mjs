@@ -3816,6 +3816,93 @@ test("API forwarder pins Copilot's per-event Responses ids to the created respon
   }
 });
 
+test("API forwarder repairs recursive namespace schemas only for opted-in models", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "forwarder-namespace-recursion-"));
+  const specs = [
+    ["meta", "namespace-recursion", true],
+    ["meta", "namespace-control", false],
+    ["deepseek", "chat-recursion", true],
+  ].map(([provider, name, flatten], index) => ({
+    slug: `${provider}/${name}`, gatewayModel: `${provider}-${name}`,
+    upstreamModel: name, provider, listed: true, displayName: name,
+    description: "Recursive schema regression fixture.", priority: 500 + index,
+    defaultEffort: "high", reasoningLevels: [{ effort: "high", description: "High" }],
+    contextWindow: 131072, autoCompact: 110000, inputModalities: ["text"],
+    compHash: `${name}-test-v1`, ...(flatten ? { toolSchemaRecursion: "flatten" } : {}),
+  }));
+  const userModels = path.join(dir, "user-models.json");
+  writeFileSync(userModels, JSON.stringify({ version: 1, models: specs }));
+  const requests = [];
+  const upstream = await mockServer(async (request, response) => {
+    requests.push(await bodyJson(request));
+    json(response, 200, { output: [], choices: [] });
+  });
+  const port = await openPort();
+  const forwarder = run("api-forwarder.mjs", {
+    CODEX_ROUTER_API_PORT: String(port), MODEL_ROUTER_STATE_DIR: dir,
+    MODEL_ROUTER_USER_MODELS: userModels,
+    META_BASE_URL: `http://127.0.0.1:${upstream.port}/v1`, META_API_KEY: "TEST_META_KEY",
+    DEEPSEEK_API_BASE_URL: `http://127.0.0.1:${upstream.port}/v1`, DEEPSEEK_API_KEY: "TEST_DEEPSEEK_KEY",
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const recursive = {
+    type: "object", properties: { node: { $ref: "#/$defs/node" } },
+    $defs: { node: { type: "object", properties: {
+      label: { type: "string" },
+      child: { $ref: "#/$defs/node", description: "optional nested node" },
+    } } },
+  };
+  const acyclic = {
+    type: "object", properties: { first: { $ref: "#/$defs/label" }, second: { $ref: "#/$defs/label" } },
+    $defs: { label: { type: "string" } },
+  };
+  const fn = { type: "function", name: "inspect_tree", parameters: recursive };
+  const tools = [
+    fn,
+    { type: "namespace", name: "tree", description: "Tree tools", tools: [
+      { ...fn, inputSchema: recursive },
+      { type: "function", name: "labels", parameters: acyclic },
+      { type: "custom", name: "raw", format: { type: "text" } },
+    ] },
+  ];
+  try {
+    await waitFor(`http://127.0.0.1:${port}/health`, forwarder, { Authorization: `Bearer ${INTERNAL_KEY}` });
+    for (const spec of specs) {
+      const chat = spec.provider === "deepseek";
+      const response = await fetch(`http://127.0.0.1:${port}/v1/${chat ? "chat/completions" : "responses"}`, {
+        method: "POST", headers: { Authorization: `Bearer ${INTERNAL_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: spec.gatewayModel,
+          ...(chat ? { messages: [{ role: "user", content: "test" }], tools: [{ type: "function", function: { name: fn.name, parameters: recursive } }] }
+            : { input: "test", tools }),
+        }),
+      });
+      assert.equal(response.status, 200, forwarder.testErrors());
+      const sent = requests.at(-1);
+      if (!spec.toolSchemaRecursion) {
+        assert.deepEqual(sent.tools, tools, "models without the flag must keep their schemas");
+        continue;
+      }
+      const schemas = chat ? [sent.tools[0].function.parameters]
+        : [sent.tools[0].parameters, sent.tools[1].tools[0].parameters, sent.tools[1].tools[0].inputSchema];
+      for (const schema of schemas) {
+        assert.equal(schema.properties.node.$ref, "#/$defs/node");
+        assert.equal(schema.$defs.node.properties.label.type, "string");
+        assert.deepEqual(schema.$defs.node.properties.child, { description: "optional nested node" });
+      }
+      if (!chat) {
+        assert.equal(sent.tools[1].type, "namespace");
+        assert.equal(sent.tools[1].name, "tree");
+        assert.deepEqual(sent.tools[1].tools.slice(1), tools[1].tools.slice(1));
+      }
+    }
+    assert.equal(requests.length, specs.length);
+  } finally {
+    await stopChild(forwarder);
+    await closeServer(upstream.server);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // The forwarder sits downstream of the gateway, so Codex's own traffic reaches
 // it already bridged. What this covers is the other way in: a client talking to
 // the gateway directly, whose image would otherwise reach the provider intact
@@ -4205,6 +4292,76 @@ test("API forwarder leaves non-Gemini tool calls unsigned and schemas unchanged"
     assert.equal(call.thought_signature, undefined);
     assert.equal(call.extra_content, undefined);
     assert.deepEqual(upstreamRequests[0].tools, tools);
+  } finally {
+    await stopChild(forwarder);
+    await closeServer(upstream.server);
+  }
+});
+
+test("Spark current follows the server model without a forwarder restart", async () => {
+  const requests = [];
+  const upstream = await mockServer(async (request, response) => {
+    requests.push({ headers: request.headers, body: await bodyJson(request) });
+    json(response, 200, { model: requests.length === 1 ? "loaded-model-a" : "loaded-model-b", choices: [] });
+  });
+  const port = await openPort();
+  const forwarder = run("api-forwarder.mjs", {
+    CODEX_ROUTER_API_PORT: String(port),
+    SPARK_CURRENT_BASE_URL: `http://127.0.0.1:${upstream.port}/v1`,
+    SPARK_QWEN_API_KEY: "TEST_SPARK_KEY",
+  });
+  try {
+    await waitFor(`http://127.0.0.1:${port}/health`, forwarder, {
+      Authorization: `Bearer ${INTERNAL_KEY}`,
+    });
+    for (const expectedModel of ["loaded-model-a", "loaded-model-b"]) {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${INTERNAL_KEY}`, "Content-Type": "application/json", "ChatGPT-Account-Id": "native-account-must-not-leak" },
+        body: JSON.stringify({ model: "spark-current", reasoning_effort: "xhigh", messages: [{ role: "user", content: "test" }] }),
+      });
+      assert.equal(response.status, 200);
+      assert.equal((await response.json()).model, expectedModel);
+      assert.equal(Object.hasOwn(requests.at(-1).body, "model"), false);
+      assert.equal(requests.at(-1).body.reasoning_effort, undefined);
+      assert.equal(requests.at(-1).body.thinking, undefined);
+      assert.equal(requests.at(-1).headers.authorization, "Bearer TEST_SPARK_KEY");
+      assert.equal(requests.at(-1).headers["chatgpt-account-id"], undefined);
+    }
+    assert.equal(requests.length, 2);
+  } finally {
+    await stopChild(forwarder);
+    await closeServer(upstream.server);
+  }
+});
+
+test("migrated Spark route preserves native effort tiers and isolates auth", async () => {
+  const requests = [];
+  const upstream = await mockServer(async (request, response) => {
+    requests.push({ headers: request.headers, body: await bodyJson(request) });
+    json(response, 200, { choices: [] });
+  });
+  const port = await openPort();
+  const forwarder = run("api-forwarder.mjs", {
+    CODEX_ROUTER_API_PORT: String(port),
+    SPARK_QWEN_BASE_URL: `http://127.0.0.1:${upstream.port}/v1`,
+    SPARK_QWEN_API_KEY: "TEST_SPARK_KEY",
+  });
+  try {
+    await waitFor(`http://127.0.0.1:${port}/health`, forwarder, {
+      Authorization: `Bearer ${INTERNAL_KEY}`,
+    });
+    for (const [effort, expected] of [["minimal", "low"], ["low", "low"], ["medium", "medium"], ["high", "xhigh"], ["max", "xhigh"]]) {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${INTERNAL_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "spark-qwen-qwen3-8-27b", reasoning_effort: effort, messages: [{ role: "user", content: "test" }] }),
+      });
+      assert.equal(response.status, 200);
+      assert.equal(requests.at(-1).body.reasoning_effort, expected);
+      assert.equal(requests.at(-1).body.model, "qwen3.8-27b");
+      assert.equal(requests.at(-1).headers.authorization, "Bearer TEST_SPARK_KEY");
+    }
   } finally {
     await stopChild(forwarder);
     await closeServer(upstream.server);
@@ -12490,7 +12647,7 @@ test("router repairs LiteLLM legacy argument events for native Z.ai custom tools
   }
 });
 
-function curatedMuseCompatibilityModel() {
+function curatedMuseCompatibilityModel(overrides = {}) {
   const dir = mkdtempSync(path.join(os.tmpdir(), "routing-opencode-tool-model-"));
   const file = path.join(dir, "user-models.json");
   const muse = {
@@ -12498,6 +12655,7 @@ function curatedMuseCompatibilityModel() {
     gatewayModel: "opencode-free-responses-muse-spark-1-2-contributor-free",
     upstreamModel: "muse-spark-1.2-contributor-free",
     provider: "opencode-free-responses",
+    ...overrides,
   };
   writeFileSync(
     file,
@@ -12683,6 +12841,73 @@ async function writeFragmentedFunctionCallSse(response, { model, patch }) {
   }
   response.end();
 }
+
+test("Meta Muse 1.3 Contributor bridges custom tools, results and streamed calls", async () => {
+  const curated = curatedMuseCompatibilityModel({
+    slug: "meta/muse-spark-1.3-contributor", provider: "meta",
+    gatewayModel: "meta-muse-spark-1-3-contributor", upstreamModel: "muse-spark-1.3-contributor",
+  });
+  const requests = [];
+  const raw = "const value = 'MUSE_CUSTOM_OK';\ntext(value);";
+  const gateway = await mockServer(async (request, response) => {
+    if (request.method === "GET") return json(response, 200, { ok: true });
+    const body = await bodyJson(request);
+    requests.push(body);
+    if (body.model === "cliproxy-kimi-k3") return json(response, 200, { output: [] });
+    if (body.tools.some(tool => tool.type === "custom" || tool.type === "namespace")) {
+      return json(response, 400, { error: { message: "CUSTOM_TOOLS_NOT_BRIDGED" } });
+    }
+    if (body.stream) return writeFragmentedFunctionCallSse(response, { model: body.model, patch: raw });
+    if (body.input.some(item => item.type === "function_call_output")) {
+      return json(response, 200, { output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "MUSE_CUSTOM_OK" }] }] });
+    }
+    json(response, 200, jsonFunctionCallResponse("exec", raw));
+  });
+  const port = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(port), MODEL_ROUTER_USER_MODELS: curated.file,
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_API_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_GATEWAY_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    CODEX_ROUTER_API_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const tools = [
+    { type: "custom", name: "exec", description: "Run JavaScript", format: { type: "grammar", syntax: "lark", definition: "start: /.+/" } },
+    { type: "custom", name: "apply_patch", description: "Patch file" },
+    { type: "namespace", name: "native", tools: [{ type: "function", name: "read", parameters: { type: "object", properties: {} } }] },
+  ];
+  const input = [{ role: "user", content: "Run the custom tool" }];
+  const body = { model: curated.muse.slug, input, tools, stream: false, tool_choice: { type: "custom", name: "exec" } };
+  const send = payload => fetch(`${routerBase(port)}/responses`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  try {
+    await waitFor(`${routerBase(port)}/models`, router);
+    const first = await send(body);
+    assert.equal(first.status, 200, router.testErrors());
+    const output = (await first.json()).output;
+    assert.equal(output[0].type, "custom_tool_call");
+    assert.equal(output[0].name, "exec");
+    assert.equal(output[0].input, raw);
+    assert.match(requests[0].tools.find(tool => tool.name === "exec").description, /start: \/\.\+\//);
+    assert.equal(requests[0].tool_choice, "auto", "upstream Meta profile disallows forced choices");
+    const result = await send({ ...body, input: [...input, ...output, { type: "custom_tool_call_output", call_id: output[0].call_id, output: "MUSE_CUSTOM_OK" }] });
+    assert.equal(result.status, 200);
+    assert.equal(requests[1].input.at(-1).type, "function_call_output");
+    assert.equal(JSON.parse(requests[1].input.at(-2).arguments).input, raw);
+    const streamed = await send({ ...body, stream: true, tool_choice: { type: "custom", name: "apply_patch" } });
+    assert.equal(streamed.status, 200);
+    const events = (await streamed.text()).split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+    assert.equal(events.find(event => event.type === "response.custom_tool_call_input.done").input, raw);
+    assert.equal(events.at(-1).response.output[0].type, "custom_tool_call");
+    const control = await send({ ...body, model: "cliproxy-kimi/k3" });
+    assert.equal(control.status, 200);
+    assert.deepEqual(requests.at(-1).tools, tools, "Kimi keeps its native Responses tool contract");
+  } finally {
+    await stopChild(router);
+    await closeServer(gateway.server);
+    rmSync(curated.dir, { recursive: true, force: true });
+  }
+});
 
 test("Zen Free Muse bridges custom tools across JSON, history, and errors", async () => {
   const curated = curatedMuseCompatibilityModel();
@@ -14022,6 +14247,7 @@ for (const [label, model, generic] of [
       CODEX_ROUTER_PORT: String(routerPort),
       CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
       MODEL_ROUTER_STATE_DIR: stateDir,
+      CODEX_ROUTER_API_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
       ...(fixture
         ? {
             MODEL_ROUTER_GENERIC_PROVIDERS: fixture.providersFile,

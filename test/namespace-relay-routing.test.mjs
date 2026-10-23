@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { GROK_PATCH_HOOK_PREFIX, GROK_PATCH_HOOK_HEADER, GROK_PATCH_HOOK_CAPABILITY } from "../src/grok-patch-hook-transport.mjs";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { GROK_STRUCTURED_PATCH_CODEC, serializeStructuredPatch } from "../src/grok-structured-patch.mjs";
+import { userModelEntry } from "../src/user-models.mjs";
 import {
   APPLY_PATCH_TOOL_NAME,
   GROK_APPLY_PATCH_CREATE_EXAMPLE,
@@ -82,6 +83,11 @@ function run(script, env) {
     env?.MODEL_ROUTER_STATE_DIR || env?.CODEX_ROUTER_STATE_DIR
       ? {}
       : { MODEL_ROUTER_STATE_DIR: mkdtempSync(path.join(os.tmpdir(), "relay-routing-state-")) };
+  const stateDir = env?.MODEL_ROUTER_STATE_DIR || env?.CODEX_ROUTER_STATE_DIR || stateIsolation.MODEL_ROUTER_STATE_DIR;
+  const fixtureUserModels = path.join(stateDir, "native-responses-fixture.json");
+  writeFileSync(fixtureUserModels, JSON.stringify({ version: 1, models: [
+    userModelEntry({ providerId: "opencode-zen-responses", upstreamId: "native-fixture", priority: 500 }),
+  ] }));
   const child = spawn(process.execPath, [path.join(root, "src", script)], {
     cwd: root,
     env: {
@@ -90,6 +96,7 @@ function run(script, env) {
       CODEX_ROUTER_CALLER_KEY: CALLER_KEY,
       CODEX_ROUTER_INTERNAL_KEY: INTERNAL_KEY,
       CODEX_ROUTER_SHOW_ALL_MODELS: "1",
+      MODEL_ROUTER_USER_MODELS: fixtureUserModels,
       ...env,
     },
     stdio: ["ignore", "ignore", "pipe"],
@@ -943,6 +950,7 @@ async function scenario(
   const router = run("router.mjs", {
     CODEX_ROUTER_PORT: String(routerPort),
     CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_API_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
     CODEX_ROUTER_QUIET: "1",
     ...routerEnv,
     ...preparedRouterEnv,
@@ -1933,13 +1941,13 @@ test("Responses-native routes preserve pre-flattened tools and restore call iden
 
 test("Responses-native routed providers inherit the model on fresh local thread calls", async () => {
   const options = {
-    model: "meta/muse-spark-1.2",
+    model: "opencode-zen-responses/native-fixture",
     sseBody: responsesProviderSseBody,
     jsonBody: responsesProviderJsonBody,
     requestPayload: routedToolSearchHistoryPayload,
   };
   const streamed = await scenario(true, options);
-  assert.equal(streamed.gatewayBodies[0].model, "meta-muse-spark-1-2");
+  assert.equal(streamed.gatewayBodies[0].model, "opencode-zen-responses-native-fixture");
   assert.ok(
     streamed.gatewayBodies[0].tools.some((tool) => tool?.type === "namespace"),
     "Responses-native tools stay namespaced",
@@ -1961,7 +1969,7 @@ test("Responses-native routed providers inherit the model on fresh local thread 
   assert.deepEqual(JSON.parse(streamedCall.arguments), {
     prompt: "hi",
     target: { type: "projectless" },
-    model: "meta/muse-spark-1.2",
+    model: "opencode-zen-responses/native-fixture",
   });
 
   const nonStreaming = await scenario(false, options);
@@ -1969,7 +1977,7 @@ test("Responses-native routed providers inherit the model on fresh local thread 
   assert.deepEqual(JSON.parse(nonStreamingCall.arguments), {
     prompt: "hi",
     target: { type: "projectless" },
-    model: "meta/muse-spark-1.2",
+    model: "opencode-zen-responses/native-fixture",
   });
 });
 
@@ -2334,14 +2342,10 @@ test("OpenCode Go Muse removes recursive tool refs in both response modes", asyn
 });
 
 // Issue #792 added the cycle-closing repair for the direct Meta Muse Spark 1.3
-// Contributor route, but it ran only in the api-forwarder, which understands
-// top-level `type: "function"` tools. A Responses-native endpoint keeps Codex's
-// `type: "namespace"` entries, so the app and MCP toolset -- where the
-// recursive `$defs` actually lives -- reached Meta unchanged and a tool-bearing
-// turn still came back as HTTP 400 `Recursive JSON schemas are not currently
-// supported`. The route's own `toolSchemaRecursion` flag now opts it into the
-// router-side repair too; the sibling Meta route without that measured proof
-// keeps its payload byte-identical, which is the control below.
+// Contributor route. Our local direct Muse boundary also flattens namespaces
+// into function tools, preserving and repairing both schema spellings. Verify
+// the router-side repair on the flagged Contributor route; the sibling's
+// forwarder-side repair is exercised in generic-routing.test.mjs.
 test("direct Meta Muse Spark 1.3 Contributor breaks recursive refs inside namespace tools", async () => {
   const recursiveNamespaceChild = () => ({
     type: "function",
@@ -2396,8 +2400,7 @@ test("direct Meta Muse Spark 1.3 Contributor breaks recursive refs inside namesp
   });
   const namespaceChildOf = (body) =>
     body.tools
-      .find((tool) => tool.type === "namespace")
-      .tools.find((tool) => tool.name === "automation_update");
+      .find((tool) => tool.type === "function" && tool.name === "codex_app__automation_update");
 
   const verified = await scenario(true, {
     model: "meta/muse-spark-1.3-contributor",

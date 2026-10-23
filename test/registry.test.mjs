@@ -121,6 +121,23 @@ test("provider registry exposes configured API and OAuth model families", () => 
       "kimi-oauth/k3",
       "kimi-oauth/kimi-for-coding-highspeed",
       "kimi-oauth/kimi-for-coding",
+      // Operator-local routes shipped by the config/local-migrated fragments
+      // (CLIProxyAPI-hosted Kimi and Grok, Crof, and the Spark Qwen endpoint).
+      // They are part of this install's registry, so they are part of what it
+      // publishes; a checkout replacement must carry these fragments over.
+      "cliproxy-antigravity/gemini-3.8-flash",
+      "cliproxy-antigravity/claude-sonnet-4-6",
+      "cliproxy-antigravity/claude-opus-4-6",
+      "cliproxy-claude/claude-opus-5.5",
+      "cliproxy-claude/claude-opus-4.8",
+      "cliproxy-claude/claude-fable-5.1",
+      "cliproxy-grok/grok-4.7",
+      "cliproxy-grok/grok-4.6",
+      "cliproxy-grok/grok-4.5",
+      "cliproxy-kimi/k3",
+      "crof/deepseek-v4-pro-0813",
+      "crof/deepseek-v4-flash-0731",
+      "spark-qwen/qwen3.8-27b",
       "meta/muse-spark-1.1",
       "meta/muse-spark-1.2-contributor",
       "meta/muse-spark-1.2",
@@ -239,6 +256,7 @@ test("provider registry exposes configured API and OAuth model families", () => 
       "qwen-plan/qwen3.8-flash",
       "qwen-plan/qwen3.8-max-preview",
       "qwen-plan/qwen3.8-max",
+      "spark/current",
       "stepfun-api/step-3.5-flash-2603",
       "stepfun-api/step-3.7-flash",
       "stepfun-api/step-5-preview",
@@ -668,7 +686,17 @@ test("provider registry exposes configured API and OAuth model families", () => 
   assert.deepEqual(ollamaK3.inputModalities, ["text", "image"]);
   // Hosted search is an xAI-backend behavior. Standalone search is limited to
   // provider/model pairs verified against Codex's client-side replay path.
-  for (const slug of ["grok-oauth/grok-4.5", "grok-oauth/grok-4.6", "grok-oauth/grok-4.7"]) {
+  const hostedSearchSlugs = [
+    "grok-oauth/grok-4.5",
+    "grok-oauth/grok-4.6",
+    "grok-oauth/grok-4.7",
+    // CLIProxyAPI serves the same xAI Responses backend, and its hosted search
+    // was verified live (`web_search_call` items returned for grok-4.6).
+    "cliproxy-grok/grok-4.5",
+    "cliproxy-grok/grok-4.6",
+    "cliproxy-grok/grok-4.7",
+  ];
+  for (const slug of hostedSearchSlugs) {
     assert.deepEqual(MODEL_BY_SLUG.get(slug).searchTool, { mode: "hosted" });
   }
   const standaloneSearchSlugs = new Set([
@@ -680,7 +708,7 @@ test("provider registry exposes configured API and OAuth model families", () => 
     "zai-coding/glm-5.3-flash",
   ]);
   for (const model of MODELS) {
-    if (["grok-oauth/grok-4.5", "grok-oauth/grok-4.6", "grok-oauth/grok-4.7"].includes(model.slug) || standaloneSearchSlugs.has(model.slug)) continue;
+    if (hostedSearchSlugs.includes(model.slug) || standaloneSearchSlugs.has(model.slug)) continue;
     assert.equal(model.searchTool, undefined, model.slug);
   }
   // Original-detail images are declared per slug on canonical vision
@@ -691,6 +719,11 @@ test("provider registry exposes configured API and OAuth model families", () => 
   ).map((model) => model.slug);
   assert.deepEqual(originalDetailSlugs.sort(), [
     "anthropic-api/claude-opus-4.8",
+    // CLIProxyAPI relays the same xAI vision backend; original detail was
+    // verified live against grok-4.6 through the local proxy.
+    "cliproxy-grok/grok-4.5",
+    "cliproxy-grok/grok-4.6",
+    "cliproxy-grok/grok-4.7",
     "deepseek/deepseek-v4-flash-vision-exp",
     "grok-api/grok-4.5",
     "grok-api/grok-4.7",
