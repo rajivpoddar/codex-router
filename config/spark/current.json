@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "slug": "spark/current",
+      "gatewayModel": "spark-current",
+      "upstreamModel": "server-default",
+      "provider": "spark",
+      "listed": true,
+      "displayName": "Spark Current",
+      "description": "The model currently loaded on DGX Spark port 30000. Server controls model selection and thinking; no client effort override.",
+      "priority": 10,
+      "defaultEffort": "medium",
+      "reasoningLevels": [
+        {
+          "effort": "medium",
+          "description": "Server defaults (no effort override)"
+        }
+      ],
+      "contextWindow": 262144,
+      "autoCompact": 220000,
+      "inputModalities": [
+        "text"
+      ],
+      "requestProfile": "spark-server-default",
+      "compHash": "spark-current-server-default-v1"
+    }
+  ]
+}

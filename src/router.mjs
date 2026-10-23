@@ -94,6 +94,7 @@ import {
   deepSeekResponsesInput,
   usesDeepSeekResponses,
 } from "./deepseek-responses.mjs";
+import { usesNativeResponses } from "./native-responses-routing.mjs";
 import { exactRouteProbeRequested } from "./exact-route-probe.mjs";
 import {
   MERGED_CATALOG_PATH,
@@ -1121,19 +1122,16 @@ async function nativeResponsesWebSocketFetch(url, init, { fallbackFetch, onSent,
 
 function routedResponsesTarget(route) {
   // WebSocket-transport providers terminate at the api-forwarder directly,
-  // exactly like DeepSeek Responses: LiteLLM has no WebSocket leg, and the
-  // forwarder owns both the credential boundary and the pooled upstream
-  // connections. Their litellm.yaml entries stay but go unused.
-  if (usesDeepSeekResponses(route) || usesProviderResponsesWebSocket(route)) {
+  // exactly like DeepSeek Responses and the local native Responses routes:
+  // LiteLLM has no WebSocket leg, and the forwarder owns both the credential
+  // boundary and the pooled upstream connections. Their litellm.yaml entries
+  // stay but go unused.
+  if (usesDeepSeekResponses(route) || usesProviderResponsesWebSocket(route) || usesNativeResponses(route)) {
     return `${API_BASE}/responses`;
   }
   return `${GATEWAY_BASE}/responses`;
 }
 
-// LiteLLM translates Codex Responses requests into Chat Completions only after
-// this router hands the turn to the gateway. A profile that rejects forced
-// tool choices therefore has to be normalized here, before that translation
-// can cause the upstream model to emit an invalid forced call.
 function isNoneToolChoice(toolChoice) {
   return toolChoice === "none"
     || (toolChoice && typeof toolChoice === "object" && !Array.isArray(toolChoice)
@@ -1225,23 +1223,29 @@ function needsZenFreeToolCompatibility(route) {
   );
 }
 
-// Console Go's Responses endpoint is Responses-shaped but implements only the
-// ordinary function-tool subset: namespace/custom/deferred-search controls are
-// rejected, as are function names over 64 characters. Keep this exact to the
-// Go Responses variant; paid Zen and other Responses providers retain their
-// native contract until their own upstream proves otherwise.
-function needsConsoleGoResponsesToolCompatibility(route) {
-  return providerForModel(route)?.id === "opencode-go-responses";
+// Console Go, Meta Muse, and the CLIProxyAPI Responses routes need the ordinary
+// function-tool subset. Meta's current 1.1, 1.2, and 1.3 endpoints (including
+// Contributor) reject custom tools. xAI's and CLIProxyAPI's Gemini Responses
+// surface accept a freeform `type: "custom"` definition without ever returning
+// one, so a forced apply_patch choice comes back as no tool call at all (and,
+// on Gemini, no visible output either). Restore Codex's original calls/results
+// with the namespace/custom bridge. Other Responses providers retain their
+// native tool contract.
+function needsFunctionToolResponsesCompatibility(route) {
+  const providerId = providerForModel(route)?.id;
+  return providerId === "opencode-go-responses" ||
+    (usesNativeResponses(route) &&
+      ["deepseek", "spark", "meta", "cliproxy-grok", "cliproxy-antigravity", "cliproxy-claude"].includes(providerId));
 }
 
 function rejectsWebSearchOptions(route) {
   return ["fireworks", "opencode-go"].includes(providerForModel(route)?.id);
 }
 
-function needsStrictOpenCodeToolCompatibility(route) {
+function needsBridgedToolCompatibility(route) {
   return (
     needsZenFreeToolCompatibility(route) ||
-    needsConsoleGoResponsesToolCompatibility(route)
+    needsFunctionToolResponsesCompatibility(route)
   );
 }
 
@@ -3116,7 +3120,7 @@ async function summarizeWith(
     ),
     route,
   );
-  const providerInput = (needsConsoleGoResponsesToolCompatibility(route) || usesDeepSeekResponses(route))
+  const providerInput = (needsFunctionToolResponsesCompatibility(route) || usesDeepSeekResponses(route))
     ? strictOpenCodeCompactionInput(compatibleInput, payload.tools, {
         maxNameLength: 64,
       })
@@ -3749,13 +3753,14 @@ async function buildRoutedRequest({ request, payload, route, agedInput }) {
   let namespacesFlattened = false;
   let flattenedNamespaces = new Map();
   const provider = providerForModel(route);
-  const chatCompletionsProvider = provider?.protocol !== "openai-responses";
+  const nativeResponses = usesNativeResponses(route);
+  const chatCompletionsProvider = !nativeResponses && provider?.protocol !== "openai-responses";
   const deepSeekResponses = usesDeepSeekResponses(route);
-  const consoleGoResponsesCompatibility = needsConsoleGoResponsesToolCompatibility(route);
+  const functionToolResponsesCompatibility = needsFunctionToolResponsesCompatibility(route);
   // Restore declarations only where the existing adapter flattens tools again.
   // Native Responses routes retain the client's original declaration shape and
   // restore only their response lookup below.
-  const clientTools = chatCompletionsProvider || deepSeekResponses || consoleGoResponsesCompatibility
+  const clientTools = chatCompletionsProvider || deepSeekResponses || functionToolResponsesCompatibility
     ? restorePreflattenedToolNamespaces(payload.tools, payload.client_metadata)
     : payload.tools;
   const compatibleInput = genericResponsesCompatibleInput(
@@ -3855,7 +3860,8 @@ async function buildRoutedRequest({ request, payload, route, agedInput }) {
   // flattened into ordinary functions; DeepSeek's native Responses endpoint
   // requires the same tool subset. The response transform maps calls back to
   // the client's native namespace shape.
-  if (chatCompletionsProvider || deepSeekResponses) {
+  if (chatCompletionsProvider || deepSeekResponses ||
+      (nativeResponses && provider?.protocol !== "openai-responses")) {
     // Relay the app's full native toolset (threads, automations, app
     // navigation) to the provider. The client registers these tools with
     // deferLoading and executes the calls natively, but only sends a reduced
@@ -3875,10 +3881,10 @@ async function buildRoutedRequest({ request, payload, route, agedInput }) {
     if (namespacesFlattened) {
       tools = flattened.tools;
     }
-  } else if (consoleGoResponsesCompatibility) {
-    // Console Go exposes a Responses endpoint but rejects the native tool
-    // discriminators Codex sends. Translate only its tool boundary; unlike the
-    // chat-completions branch, do not inject the deferred codex_app snapshot.
+  } else if (functionToolResponsesCompatibility) {
+    // These Responses routes need function tools. Flatten namespaces before
+    // the custom-tool bridge so it can restore the native calls on return.
+    // Do not inject the deferred codex_app snapshot on Responses routes.
     const flattened = flattenNamespaceTools(tools, { maxNameLength: 64 });
     namespacesFlattened = flattened.flattened;
     flattenedNamespaces = flattened.namespaces;
@@ -3907,7 +3913,7 @@ async function buildRoutedRequest({ request, payload, route, agedInput }) {
     // function tools are repaired in the exact shape the endpoint validates.
     tools = repairToolSchemaRoots(tools, { nonRecursive: true });
   }
-  if (needsStrictOpenCodeToolCompatibility(route)) {
+  if (needsBridgedToolCompatibility(route)) {
     tools = stripSearchContentTypes(tools);
   }
   if (needsMoonshotSchemaCompatibility(route)) {
@@ -3924,7 +3930,7 @@ async function buildRoutedRequest({ request, payload, route, agedInput }) {
     Array.isArray(tools) && tools.some(
       (tool) => tool?.type === "custom" && tool.name === "apply_patch",
     );
-  if (needsStrictOpenCodeToolCompatibility(route) || deepSeekResponses || structuredPatch || patchHook) {
+  if (needsBridgedToolCompatibility(route) || deepSeekResponses || structuredPatch || patchHook) {
     const customTools = bridgeCustomTools(
       tools,
       routedInput,
@@ -3935,7 +3941,7 @@ async function buildRoutedRequest({ request, payload, route, agedInput }) {
         ? { codecs: new Map([["apply_patch", GROK_PATCH_HOOK_CODEC]]) }
         : structuredPatch
         ? { codecs: new Map([["apply_patch", GROK_STRUCTURED_PATCH_CODEC]]) }
-        : consoleGoResponsesCompatibility
+        : functionToolResponsesCompatibility
         ? { maxNameLength: 64, bridgeAll: true }
         : undefined,
     );
@@ -3956,7 +3962,7 @@ async function buildRoutedRequest({ request, payload, route, agedInput }) {
       facadeNameCollision = GROK_FACADE_TOOL_NAMES.some((name) => incomingFacadeNames.has(name));
     }
   }
-  if (chatCompletionsProvider || consoleGoResponsesCompatibility || deepSeekResponses) {
+  if (chatCompletionsProvider || functionToolResponsesCompatibility || deepSeekResponses) {
     let searchHistory;
     try {
       searchHistory = flattenToolSearchHistory(
@@ -4026,7 +4032,7 @@ async function buildRoutedRequest({ request, payload, route, agedInput }) {
       );
     }
   }
-  if (consoleGoResponsesCompatibility || deepSeekResponses) {
+  if (functionToolResponsesCompatibility || deepSeekResponses) {
     routedToolChoice = flattenToolChoice(routedToolChoice, flattenedNamespaces);
   }
   if (provider?.protocol === "anthropic") {
@@ -4096,7 +4102,7 @@ async function buildRoutedRequest({ request, payload, route, agedInput }) {
   // reaches the provider. Set both: `reasoning.effort` is what actually
   // travels, and the flat field is what a bare chat-completions gateway reads.
   if (childEffort) {
-    if (!deepSeekResponses) routed.reasoning_effort = childEffort;
+    if (!nativeResponses && !deepSeekResponses) routed.reasoning_effort = childEffort;
     routed.reasoning = { ...(routed.reasoning || {}), effort: childEffort };
   }
   normalizeAutoToolChoice(routed, route);
@@ -5339,7 +5345,7 @@ async function handleResponses(request, response, requestUrl) {
       // LiteLLM can add blank assistant envelopes while translating either
       // Chat Completions or Messages. The factory refuses native traffic and
       // providers that already speak Responses, so those paths gain no stage.
-      const translatedToolMessageCompat = route
+      const translatedToolMessageCompat = route && !usesNativeResponses(route) && !usesDeepSeekResponses(route)
         ? translatedToolMessageCompatTransform(providerForModel(route), contentType)
         : undefined;
       if (translatedToolMessageCompat) transforms.push(translatedToolMessageCompat);

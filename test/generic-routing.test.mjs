@@ -538,7 +538,7 @@ test("direct Meta Muse Spark 1.3 Contributor flattens recursive tool schemas", a
   // `Recursive JSON schemas are not currently supported` before inference,
   // losing the whole turn downstream of the gateway. The live-verified
   // 1.3-contributor route must break only the cycle-closing edge; the
-  // same-provider 1.3 route keeps its schema byte-identical as the control.
+  // local direct Muse routes share the measured recursion limitation.
   const directory = mkdtempSync(path.join(os.tmpdir(), "meta-recursive-schema-"));
   const bodies = [];
   const upstream = await listen(async (request, response) => {
@@ -596,8 +596,8 @@ test("direct Meta Muse Spark 1.3 Contributor flattens recursive tool schemas", a
     // ...while every acyclic edge and the declared type survive...
     assert.deepEqual(repaired.properties.root, { $ref: "#/$defs/Node" });
     assert.equal(repaired.$defs.Node.type, "object");
-    // ...and the control route keeps its schema byte-identical.
-    assert.deepEqual(bodies[1].body.tools[0].parameters, schema);
+    // The sibling local Muse route applies the same compatibility repair.
+    assert.deepEqual(bodies[1].body.tools[0].parameters, repaired);
   } finally {
     await stop(child);
     await close(upstream.server);

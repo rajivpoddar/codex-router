@@ -16,6 +16,7 @@ import {
   deepSeekResponsesInput,
   usesDeepSeekResponses,
 } from "./deepseek-responses.mjs";
+import { discoverSparkModel, usesNativeResponses } from "./native-responses-routing.mjs";
 
 import {
   applyKeepAliveTimeouts,
@@ -543,21 +544,32 @@ function inlineGeminiToolSchemaRefs(payload) {
 // with a bare 400 naming neither the tool nor the definition, and the turn is
 // lost. Measured against that endpoint, an ordinary `$ref`/`$defs` pair is
 // accepted and only a reference re-entering its own ancestor is refused, so
-// `nonRecursiveToolSchema` -- which blanks exactly the cycle-closing edge and
-// returns any other schema by identity -- is the whole fix. The namespace relay
-// already uses it for the same reason.
+// `nonRecursiveToolSchema` blanks exactly the cycle-closing edge and returns
+// any other schema by identity. Responses providers also receive native
+// namespace tools, so visit their children without flattening the namespace.
 function flattenRecursiveToolSchemas(payload, protocol, options) {
   if (!Array.isArray(payload.tools)) return;
   let changed = false;
-  const tools = payload.tools.map((tool) => {
-    if (!tool || typeof tool !== "object" || Array.isArray(tool) || tool.type !== "function") {
+  const repairTool = (tool) => {
+    if (!tool || typeof tool !== "object" || Array.isArray(tool)) {
       return tool;
     }
+    if (protocol === "openai-responses" && tool.type === "namespace" && Array.isArray(tool.tools)) {
+      const children = tool.tools.map(repairTool);
+      return children.some((child, index) => child !== tool.tools[index])
+        ? { ...tool, tools: children }
+        : tool;
+    }
+    if (tool.type !== "function") return tool;
     if (protocol === "openai-responses") {
-      const flattened = nonRecursiveToolSchema(tool.parameters, options);
-      if (flattened === tool.parameters) return tool;
-      changed = true;
-      return { ...tool, parameters: flattened };
+      let repaired = tool;
+      for (const field of ["parameters", "inputSchema"]) {
+        const flattened = nonRecursiveToolSchema(tool[field], options);
+        if (flattened === tool[field]) continue;
+        changed = true;
+        repaired = { ...repaired, [field]: flattened };
+      }
+      return repaired;
     }
     const fn = tool.function;
     if (!fn || typeof fn !== "object" || Array.isArray(fn)) return tool;
@@ -565,7 +577,8 @@ function flattenRecursiveToolSchemas(payload, protocol, options) {
     if (flattened === fn.parameters) return tool;
     changed = true;
     return { ...tool, function: { ...fn, parameters: flattened } };
-  });
+  };
+  const tools = payload.tools.map(repairTool);
   if (!changed) return;
   payload.tools = tools;
   // Never quieted: a tool the model may call has lost part of its argument
@@ -1062,7 +1075,7 @@ function normalizeBody(buffer, contentType, route) {
   if (
     route === "/embeddings"
       ? !supportsOpenAIModelEndpoint(route, { model, provider })
-      : route !== expectedRoute ||
+      : (route !== expectedRoute && !(route === "/responses" && usesNativeResponses(model))) ||
         (model.supportedEndpoints !== undefined &&
           !supportsOpenAIModelEndpoint(route, { model, provider }))
   ) {
@@ -1092,7 +1105,7 @@ function normalizeBody(buffer, contentType, route) {
   // Responses providers get one checked boundary here. The request remains a
   // Responses request, but legacy aliases are normalized before any provider
   // sees it and the original payload remains available for retries.
-  if (provider.protocol === "openai-responses") {
+  if (route === "/responses") {
     if (usesDeepSeekResponses(model)) {
       // Codex subagent overrides may supply both spellings. Responses uses
       // the nested effort and must not inherit the Chat thinking parameters.
@@ -1277,7 +1290,8 @@ function normalizeBody(buffer, contentType, route) {
   // below: this is an upstream limitation, and every route that has it also
   // needs a request profile of its own, which the single-valued field cannot
   // express.
-  if (model.toolSchemaRecursion === "flatten") {
+  if (model.toolSchemaRecursion === "flatten" ||
+      (provider.id === "meta" && usesNativeResponses(model))) {
     // Only routes whose upstream proved the same `Recursive JSON schemas`
     // rejection opt in: the checked-in Muse Spark entries and locally curated
     // Moonshot models. Preserve recoverable types on the Moonshot flavor;
@@ -1286,7 +1300,34 @@ function normalizeBody(buffer, contentType, route) {
       keepBlankedTypes: moonshotSchemaRoute(provider.id, model.upstreamModel),
     });
   }
-  if (model.requestProfile === "clinepass") {
+  if (route === "/responses" && usesNativeResponses(model) && !usesDeepSeekResponses(model) &&
+      ["spark-server-default", "kimi-k3", "deepseek-thinking"].includes(model.requestProfile)) {
+    // Responses uses nested reasoning, never the Chat Completions controls.
+    const effort = payload.reasoning?.effort;
+    delete payload.reasoning_effort;
+    delete payload.thinking;
+    if (model.requestProfile === "spark-server-default") {
+      // SGLang Responses requires a model. Resolve the current ID immediately
+      // before sending, with the same endpoint credential as generation.
+      delete payload.reasoning;
+    } else {
+      const normalizedEffort = model.requestProfile === "kimi-k3"
+        ? kimiK3Effort(effort)
+        : deepSeekEffort(effort);
+      if (normalizedEffort) {
+        payload.reasoning = { ...payload.reasoning, effort: normalizedEffort };
+      }
+      if (model.requestProfile === "deepseek-thinking") {
+        delete payload.temperature;
+        delete payload.top_p;
+        delete payload.presence_penalty;
+        delete payload.frequency_penalty;
+        if (payload.tool_choice !== undefined && payload.tool_choice !== "none") {
+          payload.tool_choice = "auto";
+        }
+      }
+    }
+  } else if (model.requestProfile === "clinepass") {
     delete payload.reasoning_effort;
     delete payload.thinking;
     delete payload.top_p;
@@ -1423,6 +1464,17 @@ function normalizeBody(buffer, contentType, route) {
     delete payload.reasoning_effort;
     payload.thinking = { type: "adaptive" };
     payload.output_config = { effort };
+  } else if (model.requestProfile === "spark-server-default") {
+    // This Spark endpoint accepts an omitted model and selects its loaded
+    // weights. Keep the stable client route independent of server model swaps;
+    // the server template also owns thinking rather than Codex's effort menu.
+    delete payload.model;
+    delete payload.reasoning_effort;
+  } else if (model.requestProfile === "spark-qwen") {
+    // Preserve the pinned Spark template's native low/medium/xhigh ladder.
+    payload.reasoning_effort = ["minimal", "low"].includes(payload.reasoning_effort)
+      ? "low"
+      : payload.reasoning_effort === "medium" ? "medium" : "xhigh";
   } else if (model.requestProfile === "qwen38-community") {
     // The community endpoint's vLLM build validates reasoning_effort against a
     // literal set -- none, minimal, low, medium, high, xhigh, max -- and
@@ -1570,7 +1622,7 @@ function normalizeBody(buffer, contentType, route) {
     endpoint,
     payload,
     ...(targetPath ? { targetPath } : {}),
-    responseAdapter: provider.protocol === "openai-responses" ? "responses" : undefined,
+    responseAdapter: route === "/responses" ? "responses" : undefined,
   };
 }
 
@@ -2085,6 +2137,18 @@ async function handleRequest(request, response) {
     await relayThroughPlan();
     return;
   }
+  const needsSparkDiscovery = route === "/responses" &&
+    normalized.model.requestProfile === "spark-server-default" && usesNativeResponses(normalized.model);
+  const sparkBodyForKey = async (apiKey, baseUrl = providerBaseUrl(normalized.endpoint)) =>
+    Buffer.from(JSON.stringify({
+      ...normalized.payload,
+      model: await discoverSparkModel({ baseUrl, apiKey, signal: controller.signal }),
+    }), "utf8");
+  // A pooled credential above is only an availability preview. Discovery is
+  // an authenticated request, so defer it to the authoritative attempt below.
+  if (needsSparkDiscovery && !poolRouting.pooled) {
+    normalized.body = await sparkBodyForKey(credential.value);
+  }
   // Fetch may detach a Buffer's backing ArrayBuffer while sending it. Copilot
   // can replay once after refreshing account routing, so use one immutable
   // string for both attempts instead of trying to reuse detached bytes.
@@ -2135,17 +2199,20 @@ async function handleRequest(request, response) {
           normalized.endpoint,
         );
         let attemptTarget = upstreamTarget(attemptSession, normalized, route, requestUrl.search);
+        const attemptBody = needsSparkDiscovery
+          ? await sparkBodyForKey(attemptSession.apiKey, attemptSession.baseUrl)
+          : upstreamBody;
         const sendAttempt = () => fetch(attemptTarget, {
           method: request.method,
           headers: upstreamHeaders(
             request.headers,
-            upstreamBody,
+            attemptBody,
             attemptSession.apiKey,
             normalized.provider,
             attemptSession.headers,
             normalized.endpoint,
           ),
-          body: upstreamBody,
+          body: attemptBody,
           signal: controller.signal,
           redirect: ["/embeddings", "/decisions"].includes(route) ? "error" : "follow",
         });

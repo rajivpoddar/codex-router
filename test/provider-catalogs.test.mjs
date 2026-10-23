@@ -11,8 +11,9 @@ import {
 
 test("every selectable provider remains a canonical UI family", () => {
   const canonical = [...PROVIDERS.values()].filter((provider) => !provider.variantOf);
-  assert.equal(canonical.length, 45);
-  assert.equal(PROVIDERS.size, 53);
+  // Seven additional providers are this installation's operator-local routes.
+  assert.equal(canonical.length, 52);
+  assert.equal(PROVIDERS.size, 60);
 });
 
 test("catalog capability comes from backend provider definitions", () => {

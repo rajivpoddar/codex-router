@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "providers": [{
+    "id": "spark",
+    "displayName": "DGX Spark current service",
+    "kind": "openai-compatible",
+    "ownedBy": "local",
+    "baseUrl": "http://192.168.68.113:30000/v1",
+    "baseUrlEnv": "SPARK_CURRENT_BASE_URL",
+    "credential": {
+      "environment": ["SPARK_QWEN_API_KEY"],
+      "file": "spark-qwen-api-key.secret",
+      "legacyFiles": [],
+      "keychainServices": ["codex-router-spark-qwen"],
+      "prompt": "DGX Spark bearer key"
+    }
+  }]
+}
