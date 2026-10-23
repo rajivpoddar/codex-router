@@ -34,7 +34,7 @@
       "displayName": "Claude Opus 5.5 (CLIProxy OAuth)",
       "description": "Claude Opus 5.5 through CLIProxyAPI's Anthropic OAuth session, with agentic coding, tool calls, and native Responses reasoning.",
       "priority": 3,
-      "defaultEffort": "high",
+      "defaultEffort": "medium",
       "reasoningLevels": [
         {
           "effort": "low",
